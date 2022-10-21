@@ -1,0 +1,496 @@
+diff --git a/node_modules/expo-dev-launcher/bundle/native-modules/DevLauncherInternal.ts b/node_modules/expo-dev-launcher/bundle/native-modules/DevLauncherInternal.ts
+index 170c688..7cf9721 100644
+--- a/node_modules/expo-dev-launcher/bundle/native-modules/DevLauncherInternal.ts
++++ b/node_modules/expo-dev-launcher/bundle/native-modules/DevLauncherInternal.ts
+@@ -12,6 +12,10 @@ export async function getRecentlyOpenedApps(): Promise<RecentApp[]> {
+   return recentlyOpenedApps;
+ }
+ 
++export async function getCachedUpdates(): Promise<RecentApp[]> {
++  return await DevLauncher.getCachedUpdates();
++}
++
+ export async function clearRecentlyOpenedApps(): Promise<void> {
+   return await DevLauncher.clearRecentlyOpenedApps();
+ }
+@@ -24,6 +28,10 @@ export async function loadUpdate(updateUrl: string, projectUrl: string) {
+   return await DevLauncher.loadUpdate(updateUrl, projectUrl);
+ }
+ 
++export async function loadCachedUpdate(updateID: string) {
++  return await DevLauncher.loadCachedUpdate(updateID);
++}
++
+ export async function getNavigationStateAsync() {
+   return await DevLauncher.getNavigationState();
+ }
+diff --git a/node_modules/expo-dev-launcher/bundle/providers/AppProviders.tsx b/node_modules/expo-dev-launcher/bundle/providers/AppProviders.tsx
+index bf36ae1..43d3885 100644
+--- a/node_modules/expo-dev-launcher/bundle/providers/AppProviders.tsx
++++ b/node_modules/expo-dev-launcher/bundle/providers/AppProviders.tsx
+@@ -12,6 +12,7 @@ import { BuildInfo, CrashReport } from '../native-modules/DevLauncherInternal';
+ import { DevMenuPreferencesType } from '../native-modules/DevMenuPreferences';
+ import { DevSession } from '../types';
+ import { BuildInfoProvider } from './BuildInfoProvider';
++import { CachedUpdatesProvider } from './CachedUpdatesProvider';
+ import { CrashReportProvider } from './CrashReportProvider';
+ import { DevMenuPreferencesProvider } from './DevMenuPreferencesProvider';
+ import { DevSessionsProvider } from './DevSessionsProvider';
+@@ -56,6 +57,7 @@ export function AppProviders({
+           <DevMenuPreferencesProvider initialPreferences={initialDevMenuPreferences}>
+             <DevSessionsProvider initialDevSessions={initialDevSessions}>
+               <RecentlyOpenedAppsProvider initialApps={initialRecentlyOpenedApps}>
++                <CachedUpdatesProvider>
+                 <BuildInfoProvider initialBuildInfo={initialBuildInfo}>
+                   <CrashReportProvider initialCrashReport={initialCrashReport}>
+                     <UpdatesConfigProvider>
+@@ -73,6 +75,7 @@ export function AppProviders({
+                     </UpdatesConfigProvider>
+                   </CrashReportProvider>
+                 </BuildInfoProvider>
++                </CachedUpdatesProvider>
+               </RecentlyOpenedAppsProvider>
+             </DevSessionsProvider>
+           </DevMenuPreferencesProvider>
+diff --git a/node_modules/expo-dev-launcher/bundle/providers/CachedUpdatesProvider.tsx b/node_modules/expo-dev-launcher/bundle/providers/CachedUpdatesProvider.tsx
+new file mode 100644
+index 0000000..87d91d8
+--- /dev/null
++++ b/node_modules/expo-dev-launcher/bundle/providers/CachedUpdatesProvider.tsx
+@@ -0,0 +1,76 @@
++import * as React from 'react';
++
++import {
++  getCachedUpdates,
++} from '../native-modules/DevLauncherInternal';
++
++import type {
++  RecentAppUpdate,
++} from './RecentlyOpenedAppsProvider';
++
++export type CachedUpdates = {
++  cachedUpdates: RecentAppUpdate[];
++  setCachedUpdates: (recentApps: RecentAppUpdate[]) => void;
++};
++
++const Context = React.createContext<CachedUpdates>({
++  cachedUpdates: [],
++  setCachedUpdates: (_cachedUpdates: RecentAppUpdate[]) => {}
++});
++
++type CachedUpdatesProviderProps = {
++  children: React.ReactNode;
++};
++
++export function CachedUpdatesProvider({
++  children
++}: CachedUpdatesProviderProps) {
++  const [cachedUpdates, setCachedUpdates] = React.useState<RecentAppUpdate[]>([]);
++  return <Context.Provider value={{ cachedUpdates, setCachedUpdates }}>{children}</Context.Provider>;
++}
++
++export function useCachedUpdates() {
++  const [error, setError] = React.useState('');
++  const [isFetching, setIsFetching] = React.useState(false);
++  const { cachedUpdates, setCachedUpdates } = React.useContext(Context);
++
++  React.useEffect(() => {
++    setIsFetching(true);
++    getCachedUpdates()
++      .then((apps) => {
++        console.log('useCachedUpdates: apps.length = ' + apps.length);
++        // use a map to index apps by their url:
++        const cachedUpdates: { [id: string]: RecentAppUpdate } = {};
++
++        for (const app of apps) {
++          const id = app.id;
++
++          const previousTimestamp = cachedUpdates[id]?.timestamp ?? 0;
++
++          if (app.timestamp > previousTimestamp) {
++            cachedUpdates[id] = app;
++          }
++        }
++
++        // sorted by most recent timestamp first
++        const sortedByMostRecent = Object.values(cachedUpdates).sort(
++          (a, b) => b.timestamp - a.timestamp
++        );
++
++        console.log('useCachedUpdates: sortedByMostRecent.length = ' + sortedByMostRecent.length);
++        setCachedUpdates(sortedByMostRecent);
++        setIsFetching(false);
++      })
++      .catch((error) => {
++        console.log('useCachedUpdates error');
++        setIsFetching(false);
++        setError(error.message);
++        setCachedUpdates([]);
++      });
++  }, []);
++  return {
++    data: cachedUpdates,
++    isFetching,
++    error,
++  };
++}
+diff --git a/node_modules/expo-dev-launcher/bundle/providers/RecentlyOpenedAppsProvider.tsx b/node_modules/expo-dev-launcher/bundle/providers/RecentlyOpenedAppsProvider.tsx
+index fdc40f5..37e833e 100644
+--- a/node_modules/expo-dev-launcher/bundle/providers/RecentlyOpenedAppsProvider.tsx
++++ b/node_modules/expo-dev-launcher/bundle/providers/RecentlyOpenedAppsProvider.tsx
+@@ -12,14 +12,17 @@ type App = {
+   timestamp: number;
+ };
+ 
+-export type RecentApp =
++export type RecentAppUpdate =
+   | (App & {
+-      isEASUpdate: true;
+-      branchName: string;
+-      updateMessage: string;
+-    })
++      isEASUpdate: boolean;
++      branchName?: string;
++      updateMessage?: string;
++    });
++export type RecentAppNonUpdate =
+   | (App & { isEASUpdate: false });
+ 
++export type RecentApp = RecentAppUpdate | RecentAppNonUpdate;
++
+ type RecentlyOpenedApps = {
+   recentApps: RecentApp[];
+   setRecentApps: (recentApps: RecentApp[]) => void;
+@@ -44,7 +47,7 @@ export function RecentlyOpenedAppsProvider({
+ export function useRecentlyOpenedApps() {
+   const [error, setError] = React.useState('');
+   const [isFetching, setIsFetching] = React.useState(false);
+-  const { recentApps, setRecentApps } = React.useContext(Context);
++  const { recentApps, setRecentApps } = React.useContext<any>(Context);
+ 
+   React.useEffect(() => {
+     setIsFetching(true);
+diff --git a/node_modules/expo-dev-launcher/bundle/screens/HomeScreen.tsx b/node_modules/expo-dev-launcher/bundle/screens/HomeScreen.tsx
+index dc5babf..83a2097 100644
+--- a/node_modules/expo-dev-launcher/bundle/screens/HomeScreen.tsx
++++ b/node_modules/expo-dev-launcher/bundle/screens/HomeScreen.tsx
+@@ -28,11 +28,16 @@ import { ScreenContainer } from '../components/ScreenContainer';
+ import { Toasts } from '../components/Toasts';
+ import { UrlDropdown } from '../components/UrlDropdown';
+ import { formatUpdateUrl } from '../functions/formatUpdateUrl';
+-import { loadApp, loadUpdate } from '../native-modules/DevLauncherInternal';
++import { loadApp, loadUpdate, loadCachedUpdate } from '../native-modules/DevLauncherInternal';
++import { useCachedUpdates } from '../providers/CachedUpdatesProvider';
+ import { useCrashReport } from '../providers/CrashReportProvider';
+ import { useDevSessions } from '../providers/DevSessionsProvider';
+ import { useModalStack } from '../providers/ModalStackProvider';
+-import { RecentApp, useRecentlyOpenedApps } from '../providers/RecentlyOpenedAppsProvider';
++import {
++  RecentApp,
++  RecentAppUpdate,
++  useRecentlyOpenedApps,
++} from '../providers/RecentlyOpenedAppsProvider';
+ import { useToastStack } from '../providers/ToastStackProvider';
+ import { useUpdatesConfig } from '../providers/UpdatesConfigProvider';
+ import { DevSession } from '../types';
+@@ -73,7 +78,7 @@ export function HomeScreen({
+ 
+     await loadApp(url).catch((error) => {
+       setLoadingUrl('');
+-      modalStack.push(() => <LoadAppErrorModal message={error.message} />);
++      modalStack?.push(() => <LoadAppErrorModal message={error.message} />);
+     });
+ 
+     setLoadingUrl('');
+@@ -91,9 +96,17 @@ export function HomeScreen({
+     pollAsync({ pollAmount, pollInterval });
+   };
+ 
+-  const onRecentAppPress = async (app: RecentApp) => {
++  const onCachedUpdatePress = async (app: RecentApp) => {
++    loadCachedUpdate(app.id).catch((error) => {
++      toastStack.push(() => <Toasts.Error>{error.message}</Toasts.Error>, {
++        durationMs: 10000,
++      });
++    });
++  };
++
++  const onRecentAppPress = async (app: RecentAppUpdate) => {
+     if (app.isEASUpdate) {
+-      const updateUrl = formatUpdateUrl(app.url, app.updateMessage);
++      const updateUrl = formatUpdateUrl(app.url, app?.updateMessage || '');
+       loadUpdate(updateUrl, projectUrl).catch((error) => {
+         toastStack.push(() => <Toasts.Error>{error.message}</Toasts.Error>, {
+           durationMs: 10000,
+@@ -105,7 +118,7 @@ export function HomeScreen({
+   };
+ 
+   const onDevServerQuestionPress = () => {
+-    modalStack.push(() => <DevServerExplainerModal />);
++    modalStack?.push(() => <DevServerExplainerModal />);
+   };
+ 
+   const onCrashReportPress = () => {
+@@ -120,89 +133,94 @@ export function HomeScreen({
+         contentContainerStyle={{
+           paddingBottom: scale['48'],
+         }}>
+-          <ScreenContainer>
+-        {crashReport && (
+-          <View px="medium" py="small" mt="small">
+-            <Button.ScaleOnPressContainer onPress={onCrashReportPress} bg="default" rounded="large">
+-              <Row align="center" padding="medium" bg="default">
+-                <Button.Text color="default">
+-                  The last time you tried to open an app the development build crashed. Tap to get
+-                  more information.
+-                </Button.Text>
+-              </Row>
+-            </Button.ScaleOnPressContainer>
+-          </View>
+-        )}
+-        <View py="large">
+-          <Row px="small" align="center">
+-            <View px="medium">
+-              <TerminalIcon />
+-            </View>
+-            <Heading color="secondary">Development servers</Heading>
+-
+-            <Spacer.Horizontal />
+-
+-            {devSessions.length > 0 && (
++        <ScreenContainer>
++          {crashReport && (
++            <View px="medium" py="small" mt="small">
+               <Button.ScaleOnPressContainer
+-                bg="ghost"
+-                rounded="full"
+-                minScale={0.85}
+-                onPress={onDevServerQuestionPress}>
+-                <View rounded="full" padding="tiny">
+-                  <InfoIcon />
+-                </View>
++                onPress={onCrashReportPress}
++                bg="default"
++                rounded="large">
++                <Row align="center" padding="medium" bg="default">
++                  <Button.Text color="default">
++                    The last time you tried to open an app the development build crashed. Tap to get
++                    more information.
++                  </Button.Text>
++                </Row>
+               </Button.ScaleOnPressContainer>
+-            )}
+-          </Row>
++            </View>
++          )}
++          <View py="large">
++            <Row px="small" align="center">
++              <View px="medium">
++                <TerminalIcon />
++              </View>
++              <Heading color="secondary">Development servers</Heading>
++
++              <Spacer.Horizontal />
++
++              {devSessions.length > 0 && (
++                <Button.ScaleOnPressContainer
++                  bg="ghost"
++                  rounded="full"
++                  minScale={0.85}
++                  onPress={onDevServerQuestionPress}>
++                  <View rounded="full" padding="tiny">
++                    <InfoIcon />
++                  </View>
++                </Button.ScaleOnPressContainer>
++              )}
++            </Row>
+ 
+-          <Spacer.Vertical size="small" />
++            <Spacer.Vertical size="small" />
+ 
+-          <View px="medium">
+-            <View>
+-              {devSessions.length === 0 && (
+-                <>
+-                  <View padding="medium" bg="default" roundedTop="large">
+-                    <Text>Start a local development server with:</Text>
+-                    <Spacer.Vertical size="small" />
+-
+-                    <View bg="secondary" border="default" rounded="medium" padding="medium">
+-                      <Text type="mono" size="small">
+-                        expo start --dev-client
++            <View px="medium">
++              <View>
++                {devSessions.length === 0 && (
++                  <>
++                    <View padding="medium" bg="default" roundedTop="large">
++                      <Text>Start a local development server with:</Text>
++                      <Spacer.Vertical size="small" />
++
++                      <View bg="secondary" border="default" rounded="medium" padding="medium">
++                        <Text type="mono" size="small">
++                          expo start --dev-client
++                        </Text>
++                      </View>
++
++                      <Spacer.Vertical size="small" />
++                      <Text>Then, select the local server when it appears here.</Text>
++                      <Spacer.Vertical size="small" />
++                      <Text>
++                        Alternatively, open the Camera app and scan the QR code that appears in your
++                        terminal
+                       </Text>
+                     </View>
++                    <Divider />
++                  </>
++                )}
++
++                {devSessions?.length > 0 && (
++                  <DevSessionList devSessions={devSessions} onDevSessionPress={onDevSessionPress} />
++                )}
++
++                <FetchDevSessionsRow isFetching={isFetching} onRefetchPress={onRefetchPress} />
++                <Divider />
++
++                <UrlDropdown
++                  onSubmit={onUrlSubmit}
++                  inputValue={inputValue}
++                  setInputValue={setInputValue}
++                  isLoading={inputValue !== '' && inputValue === loadingUrl}
++                />
++              </View>
++            </View>
+ 
+-                    <Spacer.Vertical size="small" />
+-                    <Text>Then, select the local server when it appears here.</Text>
+-                    <Spacer.Vertical size="small" />
+-                    <Text>
+-                      Alternatively, open the Camera app and scan the QR code that appears in your
+-                      terminal
+-                    </Text>
+-                  </View>
+-                  <Divider />
+-                </>
+-              )}
+-
+-              {devSessions?.length > 0 && (
+-                <DevSessionList devSessions={devSessions} onDevSessionPress={onDevSessionPress} />
+-              )}
++            <Spacer.Vertical size="medium" />
+ 
+-              <FetchDevSessionsRow isFetching={isFetching} onRefetchPress={onRefetchPress} />
+-              <Divider />
++            <CachedUpdates onCachedUpdatePress={onCachedUpdatePress} />
+ 
+-              <UrlDropdown
+-                onSubmit={onUrlSubmit}
+-                inputValue={inputValue}
+-                setInputValue={setInputValue}
+-                isLoading={inputValue !== '' && inputValue === loadingUrl}
+-              />
+-            </View>
++            <RecentlyOpenedApps onRecentAppPress={onRecentAppPress} loadingUrl={loadingUrl} />
+           </View>
+-
+-          <Spacer.Vertical size="medium" />
+-
+-          <RecentlyOpenedApps onRecentAppPress={onRecentAppPress} loadingUrl={loadingUrl} />
+-        </View>
+         </ScreenContainer>
+       </ScrollView>
+     </View>
+@@ -279,6 +297,60 @@ function DevSessionList({ devSessions = [], onDevSessionPress }: DevSessionListP
+   );
+ }
+ 
++function CachedUpdates({ onCachedUpdatePress }) {
++  const { data: cachedUpdates } = useCachedUpdates();
++  console.log('CachedUpdates: cachedUpdates.length = ' + (cachedUpdates && cachedUpdates.length));
++  if (cachedUpdates.length === 0) {
++    return null;
++  }
++
++  function renderRow(app: RecentAppUpdate) {
++    const label = app.name ?? app.url;
++
++    return (
++      <RecentEASUpdateRow
++        label={label}
++        url={app.url}
++        message={app.updateMessage}
++        branchName={app.branchName}
++      />
++    );
++  }
++
++  return (
++    <View px="medium">
++      <Row align="center" py="small">
++        <Spacer.Horizontal size="small" />
++
++        <Heading color="secondary">Cached updates</Heading>
++        <Spacer.Horizontal />
++      </Row>
++
++      <View>
++        {cachedUpdates &&
++          cachedUpdates.map((app, index, arr) => {
++            const isFirst = index === 0;
++            const isLast = index === arr.length - 1;
++
++            return (
++              <LoadingContainer key={app.id} isLoading={false}>
++                <Button.ScaleOnPressContainer
++                  onPress={() => onCachedUpdatePress(app)}
++                  roundedTop={isFirst ? 'large' : 'none'}
++                  roundedBottom={isLast ? 'large' : 'none'}
++                  py="small"
++                  bg="default">
++                  {renderRow(app)}
++                </Button.ScaleOnPressContainer>
++                {!isLast && <Divider />}
++              </LoadingContainer>
++            );
++          })}
++      </View>
++    </View>
++  );
++}
++
+ function RecentlyOpenedApps({ onRecentAppPress, loadingUrl }) {
+   const { data: apps, clear: clearRecentlyOpenedApps } = useRecentlyOpenedApps();
+ 
+diff --git a/node_modules/expo-dev-launcher/ios/EXDevLauncherInternal.m b/node_modules/expo-dev-launcher/ios/EXDevLauncherInternal.m
+index b932b3e..43cb928 100644
+--- a/node_modules/expo-dev-launcher/ios/EXDevLauncherInternal.m
++++ b/node_modules/expo-dev-launcher/ios/EXDevLauncherInternal.m
+@@ -10,6 +10,7 @@
+ #import <EXDevLauncher-Swift.h>
+ #endif
+ 
++#import <EXUpdatesInterface/EXUpdatesExternalInterface.h>
+ @import EXDevMenu;
+ 
+ NSString *ON_NEW_DEEP_LINK_EVENT = @"expo.modules.devlauncher.onnewdeeplink";
+@@ -151,6 +152,21 @@ RCT_EXPORT_METHOD(getRecentlyOpenedApps:(RCTPromiseResolveBlock)resolve
+   resolve([[EXDevLauncherController sharedInstance] recentlyOpenedApps]);
+ }
+ 
++RCT_EXPORT_METHOD(getCachedUpdates:(RCTPromiseResolveBlock)resolve
++                  rejecter:(RCTPromiseRejectBlock)reject)
++{
++  NSDictionary *updatesConfiguration = [[EXDevLauncherController sharedInstance] getUpdatesConfig];
++  if (!updatesConfiguration) {
++    resolve(@[]);
++  }
++
++  [[[EXDevLauncherController sharedInstance] updatesInterface] storedUpdateManifestsWithConfiguration:updatesConfiguration success:^(NSArray<NSDictionary *> * _Nonnull updates) {
++    resolve(updates);
++  } error:^(NSError * _Nonnull error) {
++    reject(@"ERR_DEV_LAUNCHER_CANNOT_READ_UPDATES", error.localizedDescription, error);
++  }];
++}
++
+ RCT_EXPORT_METHOD(clearRecentlyOpenedApps:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+ {
+   [[EXDevLauncherController sharedInstance] clearRecentlyOpenedApps];

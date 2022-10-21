@@ -1,0 +1,95 @@
+diff --git a/node_modules/expo-updates/ios/EXUpdates/AppLauncher/EXUpdatesAppLauncherWithDatabase.h b/node_modules/expo-updates/ios/EXUpdates/AppLauncher/EXUpdatesAppLauncherWithDatabase.h
+index 77e742a..aa2c5b5 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/AppLauncher/EXUpdatesAppLauncherWithDatabase.h
++++ b/node_modules/expo-updates/ios/EXUpdates/AppLauncher/EXUpdatesAppLauncherWithDatabase.h
+@@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
+ 
+ typedef void (^EXUpdatesAppLauncherUpdateCompletionBlock)(NSError * _Nullable error, EXUpdatesUpdate * _Nullable launchableUpdate);
+ typedef void (^EXUpdatesAppLauncherQueryCompletionBlock)(NSError * _Nullable error, NSArray<NSUUID *> * _Nonnull storedUpdateIds);
++typedef void (^EXUpdatesAppLauncherQueryUpdatesCompletionBlock)(NSError * _Nullable error, NSArray<EXUpdatesUpdate *> * _Nonnull storedUpdateIds);
+ 
+ @interface EXUpdatesAppLauncherWithDatabase : NSObject <EXUpdatesAppLauncher>
+ 
+@@ -26,6 +27,10 @@ typedef void (^EXUpdatesAppLauncherQueryCompletionBlock)(NSError * _Nullable err
+ 
+ + (void)storedUpdateIdsInDatabase:(EXUpdatesDatabase *)database
+                        completion:(EXUpdatesAppLauncherQueryCompletionBlock)completionBlock;
++
+++ (void)storedUpdatesWithConfig:(EXUpdatesConfig *)config
++                       database:(EXUpdatesDatabase *)database
++                     completion:(EXUpdatesAppLauncherQueryUpdatesCompletionBlock)completionBlock;
+ @end
+ 
+ NS_ASSUME_NONNULL_END
+diff --git a/node_modules/expo-updates/ios/EXUpdates/AppLauncher/EXUpdatesAppLauncherWithDatabase.m b/node_modules/expo-updates/ios/EXUpdates/AppLauncher/EXUpdatesAppLauncherWithDatabase.m
+index 1ee4b2a..f731678 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/AppLauncher/EXUpdatesAppLauncherWithDatabase.m
++++ b/node_modules/expo-updates/ios/EXUpdates/AppLauncher/EXUpdatesAppLauncherWithDatabase.m
+@@ -132,6 +132,23 @@ static NSString * const EXUpdatesAppLauncherErrorDomain = @"AppLauncher";
+   });
+ }
+ 
+++ (void)storedUpdatesWithConfig:(EXUpdatesConfig *)config
++                       database:(EXUpdatesDatabase *)database
++                     completion:(EXUpdatesAppLauncherQueryUpdatesCompletionBlock)completionBlock;
++
++{
++  dispatch_async(database.databaseQueue,^{
++    NSArray<EXUpdatesUpdate *> *readyUpdates;
++    NSError *dbError = nil;
++    readyUpdates = [database allUpdatesWithStatus:EXUpdatesUpdateStatusReady config:config error:&dbError];
++    if (dbError != nil) {
++      completionBlock(dbError, @[]);
++    } else {
++      completionBlock(nil, readyUpdates);
++    }
++  });
++}
++
+ - (BOOL)isUsingEmbeddedAssets
+ {
+   return _assetFilesMap == nil;
+diff --git a/node_modules/expo-updates/ios/EXUpdates/EXUpdatesDevLauncherController.m b/node_modules/expo-updates/ios/EXUpdates/EXUpdatesDevLauncherController.m
+index e518b6f..777e07f 100644
+--- a/node_modules/expo-updates/ios/EXUpdates/EXUpdatesDevLauncherController.m
++++ b/node_modules/expo-updates/ios/EXUpdates/EXUpdatesDevLauncherController.m
+@@ -123,6 +123,39 @@ typedef NS_ENUM(NSInteger, EXUpdatesDevLauncherErrorCode) {
+   }];
+ }
+ 
++- (void)storedUpdateManifestsWithConfiguration:(NSDictionary *)configuration
++                                       success:(EXUpdatesQueryUpdatesSuccessBlock)successBlock
++                                         error:(EXUpdatesErrorBlock)errorBlock
++{
++  EXUpdatesConfig *updatesConfiguration = [self _setup:configuration
++                                                 error:errorBlock];
++  if (updatesConfiguration == nil) {
++    successBlock(@[]);
++  }
++
++  [EXUpdatesAppLauncherWithDatabase storedUpdatesWithConfig:updatesConfiguration database:EXUpdatesAppController.sharedInstance.database completion:^(NSError * _Nullable error, NSArray<EXUpdatesUpdate *> * _Nonnull storedUpdates) {
++    if (error != nil) {
++      errorBlock(error);
++    } else {
++      NSMutableArray<NSDictionary *> *result = [NSMutableArray new];
++      for (EXUpdatesUpdate *update in storedUpdates) {
++        NSMutableDictionary *manifest = [NSMutableDictionary new];
++        manifest[@"id"] = update.manifestJSON[@"id"];
++        manifest[@"url"] = @"Cache";
++        manifest[@"name"] = update.manifestJSON[@"id"];
++        manifest[@"timestamp"] = @([update.commitTime timeIntervalSince1970] * 1000);
++        manifest[@"isEASUpdate"] = @(YES);
++        manifest[@"branchName"] = @"preview";
++        manifest[@"updateMessage"] = @"Update message";
++        //manifest[@"manifestJSON"] = update.manifestJSON;
++        [result addObject:manifest];
++      }
++      successBlock(result);
++    }
++  }];
++   
++}
++
+ // Common initialization for both fetchUpdateWithConfiguration: and storedUpdateIdsWithConfiguration:
+ // Sets up EXUpdatesAppController shared instance
+ // Returns the updatesConfiguration
