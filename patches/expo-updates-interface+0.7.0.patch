@@ -1,5 +1,5 @@
 diff --git a/node_modules/expo-updates-interface/ios/EXUpdatesInterface/EXUpdatesExternalInterface.h b/node_modules/expo-updates-interface/ios/EXUpdatesInterface/EXUpdatesExternalInterface.h
-index 8e88bc7..75888ca 100644
+index 8e88bc7..11eec5d 100644
 --- a/node_modules/expo-updates-interface/ios/EXUpdatesInterface/EXUpdatesExternalInterface.h
 +++ b/node_modules/expo-updates-interface/ios/EXUpdatesInterface/EXUpdatesExternalInterface.h
 @@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
@@ -10,7 +10,7 @@ index 8e88bc7..75888ca 100644
  typedef void (^EXUpdatesProgressBlock) (NSUInteger successfulAssetCount, NSUInteger failedAssetCount, NSUInteger totalAssetCount);
  /**
   * Called when a manifest has been downloaded. The return value indicates whether or not to
-@@ -41,6 +42,14 @@ typedef BOOL (^EXUpdatesManifestBlock) (NSDictionary *manifest);
+@@ -41,6 +42,19 @@ typedef BOOL (^EXUpdatesManifestBlock) (NSDictionary *manifest);
                                   success:(EXUpdatesQuerySuccessBlock)successBlock
                                     error:(EXUpdatesErrorBlock)errorBlock;
  
@@ -21,6 +21,11 @@ index 8e88bc7..75888ca 100644
 +- (void)storedUpdateManifestsWithConfiguration:(NSDictionary *)configuration
 +                                       success:(EXUpdatesQueryUpdatesSuccessBlock)successBlock
 +                                         error:(EXUpdatesErrorBlock)errorBlock;
++
++- (void)launchStoredUpdateWithConfiguration:(NSDictionary *)configuration
++                                   updateID:(NSString *)updateIDString
++                                    success:(EXUpdatesUpdateSuccessBlock)successBlock
++                                      error:(EXUpdatesErrorBlock)errorBlock;
 +
  @end
  

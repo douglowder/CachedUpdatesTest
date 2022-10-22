@@ -461,7 +461,7 @@ index dc5babf..83a2097 100644
    const { data: apps, clear: clearRecentlyOpenedApps } = useRecentlyOpenedApps();
  
 diff --git a/node_modules/expo-dev-launcher/ios/EXDevLauncherInternal.m b/node_modules/expo-dev-launcher/ios/EXDevLauncherInternal.m
-index b932b3e..43cb928 100644
+index b932b3e..63be9ef 100644
 --- a/node_modules/expo-dev-launcher/ios/EXDevLauncherInternal.m
 +++ b/node_modules/expo-dev-launcher/ios/EXDevLauncherInternal.m
 @@ -10,6 +10,7 @@
@@ -472,7 +472,7 @@ index b932b3e..43cb928 100644
  @import EXDevMenu;
  
  NSString *ON_NEW_DEEP_LINK_EVENT = @"expo.modules.devlauncher.onnewdeeplink";
-@@ -151,6 +152,21 @@ RCT_EXPORT_METHOD(getRecentlyOpenedApps:(RCTPromiseResolveBlock)resolve
+@@ -151,6 +152,44 @@ RCT_EXPORT_METHOD(getRecentlyOpenedApps:(RCTPromiseResolveBlock)resolve
    resolve([[EXDevLauncherController sharedInstance] recentlyOpenedApps]);
  }
  
@@ -488,6 +488,29 @@ index b932b3e..43cb928 100644
 +    resolve(updates);
 +  } error:^(NSError * _Nonnull error) {
 +    reject(@"ERR_DEV_LAUNCHER_CANNOT_READ_UPDATES", error.localizedDescription, error);
++  }];
++}
++
++RCT_EXPORT_METHOD(loadCachedUpdate:(NSString *)updateID)
++{
++  NSDictionary *updatesConfiguration = [[EXDevLauncherController sharedInstance] getUpdatesConfig];
++  if (!updatesConfiguration) {
++    // TODO: log something
++    return;
++  }
++
++  [[[EXDevLauncherController sharedInstance] updatesInterface] storedUpdateManifestsWithConfiguration:updatesConfiguration success:^(NSArray<NSDictionary *> * _Nonnull updates) {
++    for (NSDictionary * update in updates) {
++      if (update[@"id"] != nil && update[@"id"] != [NSNull null] && [updateID isEqualToString:update[@"id"]]) {
++        [[[EXDevLauncherController sharedInstance] updatesInterface] launchStoredUpdateWithConfiguration:updatesConfiguration updateID:updateID success:^(NSDictionary * _Nullable manifest) {
++          // TODO: log something
++        } error:^(NSError * _Nonnull error) {
++          // TODO: log something
++        }];
++      }
++    }
++  } error:^(NSError * _Nonnull error) {
++    // TODO: log something
 +  }];
 +}
 +

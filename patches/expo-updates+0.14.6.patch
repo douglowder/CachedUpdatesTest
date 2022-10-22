@@ -50,10 +50,19 @@ index 1ee4b2a..f731678 100644
  {
    return _assetFilesMap == nil;
 diff --git a/node_modules/expo-updates/ios/EXUpdates/EXUpdatesDevLauncherController.m b/node_modules/expo-updates/ios/EXUpdates/EXUpdatesDevLauncherController.m
-index e518b6f..777e07f 100644
+index e518b6f..346d548 100644
 --- a/node_modules/expo-updates/ios/EXUpdates/EXUpdatesDevLauncherController.m
 +++ b/node_modules/expo-updates/ios/EXUpdates/EXUpdatesDevLauncherController.m
-@@ -123,6 +123,39 @@ typedef NS_ENUM(NSInteger, EXUpdatesDevLauncherErrorCode) {
+@@ -27,6 +27,8 @@ typedef NS_ENUM(NSInteger, EXUpdatesDevLauncherErrorCode) {
+ 
+ @property (nonatomic, strong) EXUpdatesConfig *tempConfig;
+ 
++@property (nonatomic, strong) EXUpdatesConfig *cachedConfig;
++
+ @end
+ 
+ @implementation EXUpdatesDevLauncherController
+@@ -123,12 +125,74 @@ typedef NS_ENUM(NSInteger, EXUpdatesDevLauncherErrorCode) {
    }];
  }
  
@@ -90,6 +99,49 @@ index e518b6f..777e07f 100644
 +   
 +}
 +
++- (void)launchStoredUpdateWithConfiguration:(NSDictionary *)configuration updateID:(NSString *)updateIDString success:(EXUpdatesUpdateSuccessBlock)successBlock error:(EXUpdatesErrorBlock)errorBlock
++{
++  EXUpdatesConfig *updatesConfiguration = [self _setup:configuration
++                                                 error:errorBlock];
++  if (updatesConfiguration == nil) {
++    successBlock(@{});
++  }
++
++  [EXUpdatesAppLauncherWithDatabase storedUpdatesWithConfig:updatesConfiguration database:EXUpdatesAppController.sharedInstance.database completion:^(NSError * _Nullable error, NSArray<EXUpdatesUpdate *> * _Nonnull storedUpdates) {
++    if (error != nil) {
++      errorBlock(error);
++    } else {
++      for (EXUpdatesUpdate *update in storedUpdates) {
++        if ([updateIDString isEqualToString:update.manifestJSON[@"id"]]) {
++          [self _launchUpdate:update withConfiguration:updatesConfiguration success:^(NSDictionary * _Nullable manifest) {
++            successBlock(@{});
++          } error:^(NSError * _Nonnull error) {
++            errorBlock(error);
++          }];
++        }
++      }
++      errorBlock([NSError errorWithDomain:EXUpdatesDevLauncherControllerErrorDomain code:EXUpdatesDevLauncherErrorCodeUpdateLaunchFailed userInfo:@{NSLocalizedDescriptionKey: @"Failed to find stored update"}]);
++    }
++  }];
++}
++
  // Common initialization for both fetchUpdateWithConfiguration: and storedUpdateIdsWithConfiguration:
  // Sets up EXUpdatesAppController shared instance
  // Returns the updatesConfiguration
+ - (nullable EXUpdatesConfig *)_setup:(nonnull NSDictionary *)configuration
+                                error:(EXUpdatesErrorBlock)errorBlock
+ {
++  if (self.cachedConfig != nil) {
++    return self.cachedConfig;
++  }
+   EXUpdatesAppController *controller = EXUpdatesAppController.sharedInstance;
+   EXUpdatesConfig *updatesConfiguration = [EXUpdatesConfig configWithExpoPlist];
+   [updatesConfiguration loadConfigFromDictionary:configuration];
+@@ -147,6 +211,7 @@ typedef NS_ENUM(NSInteger, EXUpdatesDevLauncherErrorCode) {
+     return nil;
+   }
+ 
++  self.cachedConfig = updatesConfiguration;
+   return updatesConfiguration;
+ }
+ 
